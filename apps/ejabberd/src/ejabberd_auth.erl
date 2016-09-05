@@ -119,6 +119,7 @@ store_type(Server) ->
 -spec authorize(mongoose_credentials:t()) -> {ok, mongoose_credentials:t()}
                                            | {error, any()}.
 authorize(Creds) ->
+	?WARNING_MSG("Gideon is stuburn *** CHECK xp_auth branch. module: ~p, Creds: ~p", [?MODULE, Creds]),
     LServer = mongoose_credentials:lserver(Creds),
     timed_call(LServer, authorize, fun authorize_loop/2,
                [auth_modules(LServer), Creds]).
