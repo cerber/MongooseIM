@@ -134,9 +134,7 @@ terminate(_Reason, #state{host = Host}) ->
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(_Req, _From, State) ->
-    {reply, {error, badarg}, State};
-handle_call(_Req, _From, State) ->
-    {reply, {error, badarg}, State}
+    {reply, {error, badarg}, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -144,7 +142,6 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-code_chan
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -165,7 +162,7 @@ remove_user(User, Server) ->
     LServer = jlib:nameprep(Server),
     DocRoot = gen_mod:get_module_opt(LServer, ?MODULE, docroot, fun iolist_to_binary/1, <<"@HOME@/upload">>),
     JIDinURL = gen_mod:get_module_opt(LServer, ?MODULE, jid_in_url,
-                                      fun (sha1) -> sha1; (node) -> node end, sha1),
+      fun (sha1) -> sha1; (node) -> node end, sha1),
     UserStr = make_user_string(<<LUser/binary, $@, LServer/binary>>, JIDinURL),
     UserDir = str:join([expand_home(DocRoot), UserStr], <<$/>>),
     case del_tree(UserDir) of
