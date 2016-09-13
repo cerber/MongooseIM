@@ -23,46 +23,46 @@
 %%--------------------------------------------------------------------
 
 all() ->
-  [{group, http_upload}].
+    [{group, http_upload}].
 
 groups() ->
-  [{http_upload, [], [http_upload_service_discovery]}].
+    [{http_upload, [], [http_upload_service_discovery]}].
 
 suite() ->
-  escalus:suite().
+    escalus:suite().
 
 %%--------------------------------------------------------------------
 %% Init & teardown
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
-  escalus:init_per_suite(Config).
+    escalus:init_per_suite(Config).
 
 end_per_suite(Config) ->
-  escalus:end_per_suite(Config).
+    escalus:end_per_suite(Config).
 
 init_per_group(http_upload, Config) ->
-  dynamic_modules:start(<<"localhost">>, mod_http_upload, []),
-  escalus:create_users(Config, escalus:get_users([bob])).
+    dynamic_modules:start(<<"localhost">>, mod_http_upload, []),
+    escalus:create_users(Config, escalus:get_users([bob])).
 
 end_per_group(_Group, Config) ->
-  dynamic_modules:stop(<<"localhost">>, mod_http_upload),
-  escalus:delete_users(Config, escalus_users:get_users([bob])).
+    dynamic_modules:stop(<<"localhost">>, mod_http_upload),
+    escalus:delete_users(Config, escalus_users:get_users([bob])).
 
 init_per_testcase(CaseName, Config) ->
-  escalus:init_per_testcase(CaseName, Config).
+    escalus:init_per_testcase(CaseName, Config).
 
 end_per_testcase(CaseName, Config) ->
-  escalus:end_per_testcase(CaseName, Config).
+    escalus:end_per_testcase(CaseName, Config).
 
 %%--------------------------------------------------------------------
 %% Service discovery test
 %%--------------------------------------------------------------------
 http_upload_service_discovery(Config) ->
-  escalus:story(Config, [{bob, 1}],
-    fun(Bob) ->
-      SID = escalus_client:server(Bob),
-      Result = escalus:send_and_wait(Bob,
-        escalus_stanza:disco_info(SID)),
-      escalus:assert(is_iq_result, Result),
-      escalus:assert(has_feature, [?NS_HTTP_UPLOAD], Result)
-    end).
+    escalus:story(Config, [{bob, 1}],
+		  fun(Bob) ->
+			  SID = escalus_client:server(Bob),
+			  Result = escalus:send_and_wait(Bob,
+							 escalus_stanza:disco_info(SID)),
+			  escalus:assert(is_iq_result, Result),
+			  escalus:assert(has_feature, [?NS_HTTP_UPLOAD], Result)
+		  end).

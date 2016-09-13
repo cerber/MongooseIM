@@ -151,18 +151,21 @@ code_change(_OldVsn, State, _Extra) ->
 iq_http_upload(_From, _To, #iq{type = Type, sub_el = SubEl} = IQ) ->
     case {Type, SubEl} of
         {get, #xmlel{name = <<"http_upload">>}} ->
-            IQ#iq{type = result, sub_el = []};
+            IQ#iq{type = result, sub_el = 
+		      []};
         _ ->
-            IQ#iq{type = error, sub_el = [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
+            IQ#iq{type = error, sub_el = 
+		      [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
     end.
 
 -spec remove_user(binary(), binary()) -> ok.
 remove_user(User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
-    DocRoot = gen_mod:get_module_opt(LServer, ?MODULE, docroot, fun iolist_to_binary/1, <<"@HOME@/upload">>),
+    DocRoot = gen_mod:get_module_opt(LServer, ?MODULE, docroot, 
+				     fun iolist_to_binary/1, <<"@HOME@/upload">>),
     JIDinURL = gen_mod:get_module_opt(LServer, ?MODULE, jid_in_url,
-      fun (sha1) -> sha1; (node) -> node end, sha1),
+				      fun (sha1) -> sha1; (node) -> node end, sha1),
     UserStr = make_user_string(<<LUser/binary, $@, LServer/binary>>, JIDinURL),
     UserDir = str:join([expand_home(DocRoot), UserStr], <<$/>>),
     case del_tree(UserDir) of
