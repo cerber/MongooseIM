@@ -15,7 +15,7 @@
 {suites, "tests", mod_version_SUITE}.
 {suites, "tests", mod_http_upload_SUITE}.
 
-{config, ["test.config"]}.
+{config, ["test_xp.config"]}.
 {logdir, "ct_report"}.
 
 %% ct_tty_hook will log CT failures to TTY verbosely
