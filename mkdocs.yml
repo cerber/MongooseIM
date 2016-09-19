@@ -12,9 +12,11 @@ pages:
       - 'Getting started': 'user-guide/Getting-started.md'
       - 'Release/Installation configuration': 'user-guide/release_config.md'
       - 'High-level Architecture': 'user-guide/MongooseIM-High-level-Architecture.md'
+  - 'Contributions to ecosystem': 'Contributions.md'
   - 'Basic Configuration Overview': 'Basic-configuration.md'
-  - 'Advanced Configuration Overview': 'Advanced-configuration.md'
+  - 'Roadmap': 'Roadmap.md'
   - 'Advanced Configuration':
+      - 'Overview': 'Advanced-configuration.md'
       - 'Database backends configuration': 'advanced-configuration/database-backends-configuration.md'
       - 'Cassandra configuration': 'advanced-configuration/Cassandra.md'
       - 'HTTP Authentication Module': 'advanced-configuration/HTTP-authentication-module.md'
@@ -57,6 +59,7 @@ pages:
       - 'mod_version': 'modules/mod_version.md'
       - 'mod_websockets': 'modules/mod_websockets.md'
   - 'Operation and maintenance':
+      - 'Cluster management considerations': 'operation-and-maintenance/Cluster-management-considerations.md'
       - 'Cluster configuration and node management': 'operation-and-maintenance/Cluster-configuration-and-node-management.md'
       - 'Logging & monitoring': 'operation-and-maintenance/Logging-&-monitoring.md'
       - 'Reloading configuration on a running system': 'operation-and-maintenance/Reloading-configuration-on-a-running-system.md'

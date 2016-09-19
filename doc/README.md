@@ -7,9 +7,12 @@
         * Build MongooseIM on a supported OS
         * Perform basic configuration
         * Use the main administration script, `mongooseimctl`
+* [Contributions](Contributions.md)
+* [Roadmap](Roadmap.md)
 * Configuration
     * [Basic configuration](Basic-configuration.md)
     * [Advanced configuration](Advanced-configuration.md)
+        * [Overview](Advanced-configuration.md)
         * [Database backends configuration](advanced-configuration/database-backends-configuration.md)
         * [Listener modules](advanced-configuration/Listener-modules.md)
         * [Extension modules](advanced-configuration/Modules.md)

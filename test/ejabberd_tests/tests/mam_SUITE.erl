@@ -73,7 +73,8 @@
          muc_querying_for_all_messages_with_jid/1,
          muc_light_simple/1,
          run_prefs_cases/1,
-         run_set_and_get_prefs_cases/1]).
+         run_set_and_get_prefs_cases/1,
+         check_user_exist/1]).
 
 -import(muc_helper,
         [muc_host/0,
@@ -213,7 +214,8 @@ basic_group_names() ->
      archived,
      policy_violation,
      nostore,
-     prefs_cases
+     prefs_cases,
+     impl_specific
     ].
 
 all() ->
@@ -266,7 +268,9 @@ basic_groups() ->
      {with_rsm,         [], with_rsm_cases()},
      {with_rsm03,       [], with_rsm_cases()},
      {with_rsm04,       [], with_rsm_cases()},
-     {prefs_cases,      [], prefs_cases()}].
+     {prefs_cases,      [], prefs_cases()},
+     {impl_specific,    [], impl_specific()}
+    ].
 
 bootstrapped_cases() ->
      [purge_old_single_message,
@@ -351,6 +355,9 @@ prefs_cases() ->
      query_get_request,
      run_prefs_cases,
      run_set_and_get_prefs_cases].
+
+impl_specific() ->
+  [check_user_exist].
 
 suite() ->
     escalus:suite().
@@ -737,7 +744,7 @@ init_per_testcase(C=archived, ConfigIn) ->
     Config = case ?config(configuration, ConfigIn) of
                  odbc_async_pool ->
                      MongooseMetrics = [
-                                        {[data, odbc, mam_async],
+                                        {[global, data, odbc, mam_async],
                                          [{recv_oct, '>'}, {send_oct, '>'}]}
                                        ],
                      [{mongoose_metrics, MongooseMetrics} | ConfigIn];
@@ -937,8 +944,8 @@ simple_archive_request(ConfigIn) ->
         assert_respond_query_id(P, <<"q1">>, parse_result_iq(P, Res)),
         ok
         end,
-    MongooseMetrics = [{[backends, mod_mam, archive], changed},
-                       {[backends, mod_mam, lookup], changed}
+    MongooseMetrics = [{[global, backends, mod_mam, archive], changed},
+                       {[global, backends, mod_mam, lookup], changed}
                       ],
     Config = [{mongoose_metrics, MongooseMetrics} | ConfigIn],
     escalus:story(Config, [{alice, 1}, {bob, 1}], F).
@@ -2002,3 +2009,16 @@ run_set_and_get_prefs_cases(Config) ->
                                                                        Namespace <- namespaces()]
         end,
     escalus:story(Config, [{alice, 1}], F).
+
+%% MAM's implementation specific test
+check_user_exist(Config) ->
+  %% when
+  [{_, AdminSpec}] = escalus_users:get_users([admin]),
+  [AdminU, AdminS, AdminP] = escalus_users:get_usp(Config, AdminSpec),
+  ok = escalus_ejabberd:rpc(ejabberd_auth, try_register, [AdminU, AdminS, AdminP]),
+  %% admin user already registered
+  true = escalus_ejabberd:rpc(ejabberd_users, does_user_exist, [AdminU, AdminS]),
+  false = escalus_ejabberd:rpc(ejabberd_users, does_user_exist, [<<"fake-user">>, AdminS]),
+  false = escalus_ejabberd:rpc(ejabberd_users, does_user_exist, [AdminU, <<"fake-domain">>]),
+  %% cleanup
+  ok = escalus_ejabberd:rpc(ejabberd_auth, remove_user, [AdminU, AdminS]).

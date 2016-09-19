@@ -134,8 +134,8 @@ init_per_suite(Config) ->
 
 end_per_suite(Config) ->
     clear_db(),
-    dynamic_modules:stop(<<"localhost">>, mod_muc_light),
     Config1 = escalus:delete_users(Config, escalus:get_users([alice, bob, kate, mike])),
+    dynamic_modules:stop(<<"localhost">>, mod_muc_light),
     escalus:end_per_suite(Config1).
 
 init_per_group(_GroupName, Config) ->
@@ -830,7 +830,7 @@ lbin(Bin) ->
 
 -spec default_config() -> list().
 default_config() ->
-    rpc(mod_muc_light, default_config, []).
+    rpc(mod_muc_light, default_config, [?MUCHOST]).
 
 -spec set_default_mod_config() -> ok.
 set_default_mod_config() ->
