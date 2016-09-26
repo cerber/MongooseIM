@@ -80,8 +80,8 @@
                 service_url :: binary() | undefined,
                 slots = dict:new() :: term()}).
 
-                                                %-type state() :: #state{}.
-                                                %-type slot() :: [binary()].
+%%-type state() :: #state{}.
+%%-type slot() :: [binary()].
 
 %%====================================================================
 %% API
@@ -482,7 +482,7 @@ config(Host, Key, Default) ->
         _ -> Default
     end.
 
--spec slot_el(slot() | binary(), state() | binary(), binary()) -> xmlel().
+%%-spec slot_el(slot() | binary(), state() | binary(), binary()) -> xmlel().
 
 slot_el(Slot, PutPrefix, GetPrefix, XMLNS) ->
     PutURL = str:join([PutPrefix | Slot], <<$/>>),
