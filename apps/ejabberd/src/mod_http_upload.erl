@@ -22,6 +22,13 @@
 -define(SERVICE_REQUEST_TIMEOUT, 5000). % 5 seconds.
 -define(SLOT_TIMEOUT, 600000). % 10 minutes.
 
+-define(DEFAULT_HOST, <<"upload.@HOST@">>).
+-define(DEFAULT_NAME, <<"HTTP File Upload">>).
+
+-define(DEFAULT_JIDINURL, sha1).
+-define(DEFAULT_DOCROOT, <<"@HOME@/upload">>).
+-define(DEFAULT_PREFIX, <<"http://@HOST@:5444">>).
+
 -define(SUPERVISOR, ejabberd_sup).
 -define(URL_ENC(URL), binary_to_list(http_uri:encode(URL))).
 -define(ADDR_TO_STR(IP), jlib:ip_to_list(IP)).
@@ -53,10 +60,11 @@
          {<<".zip">>, <<"application/zip">>}]).
 
 %% API
--export([start_link/2]).
+-export([start_link/3]).
 
 %% gen_mod callbacks
--export([start/2, stop/1, iq_http_upload/3]).
+%%-export([start/2, stop/1, iq_http_upload/3]).
+-export([start/2, stop/1]).
 
 %% gen_server callbacks
 -export([init/1, terminate/2, handle_call/3, handle_cast/2,
@@ -80,56 +88,107 @@
                 service_url :: binary() | undefined,
                 slots = dict:new() :: term()}).
 
-%%-type state() :: #state{}.
-%%-type slot() :: [binary()].
+-type state() :: #state{}.
+-type slot() :: [binary()].
 
 %%====================================================================
 %% API
 %%====================================================================
--spec start_link(binary(), gen_mod:opts())
+-spec start_link(binary(), atom(), gen_mod:opts())
                 -> {ok, pid()} | ignore | {error, _}.
-start_link(Host, Opts) ->
-    Proc = gen_mod:get_module_proc(Host, ?MODULE),
+start_link(Host, Proc, Opts) ->
+    ?INFO_MSG("start_link on host: ~p Proc: ~p", [Host, Proc]),
     gen_server:start_link({local, Proc}, ?MODULE, [Host, Opts], []).
 
 %%====================================================================
 %% gen_mod callbacks
 %%====================================================================
 start(Host, Opts) ->
+    case gen_mod:get_opt(rm_on_unregister, Opts,
+                         fun(B) when is_boolean(B) -> B end,
+                         true) of
+        true ->
+            ejabberd_hooks:add(remove_user, Host, ?MODULE, remove_user, 50),
+            ejabberd_hooks:add(anonymous_purge_hook, Host, ?MODULE, remove_user, 50);
+        false ->
+            ok
+    end,
     Proc = gen_mod:get_module_proc(Host, ?MODULE),
-    %%  HttpUploadSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
-    %%    transient, 2000, worker, [?MODULE]},
-    HttpUploadSpec = {Proc, {?MODULE, start_link, [Host, Opts]},
+    HttpUploadSpec = {Proc, {?MODULE, start_link, [Host, Proc, Opts]},
                       permanent, 3000, worker, [?MODULE]},
+    ?INFO_MSG("started on host: ~p with Proc=~p, Opts=~p", [Host, Proc, Opts]),
     supervisor:start_child(?SUPERVISOR, HttpUploadSpec).
 
 stop(Host) ->
+    case gen_mod:get_module_opt(Host, ?MODULE, rm_on_unregister,
+                                fun(B) when is_boolean(B) -> B end,
+                                true) of
+        true ->
+            ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
+            ejabberd_hooks:delete(anonymous_purge_hook, Host, ?MODULE, remove_user, 50);
+        false ->
+            ok
+    end,
     Proc = gen_mod:get_module_proc(Host, ?MODULE),
     Pid = erlang:whereis(Proc),
     gen_server:call(Proc, stop),
     wait_for_process_to_stop(Pid),
-    supervisor:delete_child(?SUPERVISOR, Proc).
+    supervisor:delete_child(?SUPERVISOR, Proc),
+    ?INFO_MSG("stopped on host: ~p", [Host]).
 
 %%====================================================================
 %% gen_server callbacks
 %%====================================================================
 init([Host, Opts]) ->
     process_flag(trap_exit, true),
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, no_queue), %% May be used one_queue
-    mod_disco:register_feature(Host, ?NS_HTTP_UPLOAD),
-    gen_iq_handler:add_iq_handler(ejabberd_sm, Host,
-                                  ?NS_HTTP_UPLOAD, ?MODULE, iq_http_upload, IQDisc),
-    gen_iq_handler:add_iq_handler(ejabberd_local, Host,
-                                  ?NS_HTTP_UPLOAD, ?MODULE, iq_http_upload, IQDisc),
-    add_hooks_handlers(Host),
+    UploadHost = gen_mod:get_opt_host(Host, Opts, ?DEFAULT_HOST),
+    Name = gen_mod:get_opt(name, Opts, ?DEFAULT_NAME),
+    Access = gen_mod:get_opt(access, Opts, local),
+    MaxSize = gen_mod:get_opt(max_size, Opts, infinity),
+    SecretLength = gen_mod:get_opt(secret_length, Opts, 40),
+    JIDinURL = gen_mod:get_opt(jid_in_url, Opts, ?DEFAULT_JIDINURL),
+    DocRoot = gen_mod:get_opt(docroot, Opts, ?DEFAULT_DOCROOT),
+    FileMode = gen_mod:get_opt(file_mode, Opts, undefined),
+    DirMode = gen_mod:get_opt(dir_mode, Opts, undefined),
+    PutPrefix = gen_mod:get_opt(put_prefix, Opts, ?DEFAULT_PREFIX),
+    GetPrefix = gen_mod:get_opt(get_prefix, Opts, PutPrefix),
+    ServiceURL = gen_mod:get_opt(service_url, Opts, undefined),
+    case ServiceURL of
+        undefined ->
+            ok;
+        <<"http://", _/binary>> ->
+            application:start(inets);
+        <<"https://", _/binary>> ->
+            application:start(inets),
+            application:start(crypto),
+            application:start(public_key),
+            application:start(ssl)
+    end,
 
-    {ok, init_state(Host, Opts)}.
+    case DirMode of
+        undefined ->
+            ok;
+        Mode ->
+            file:change_mode(DocRoot, Mode)
+    end,
 
-terminate(_Reason, #state{host = Host}) ->
-    remove_hooks_handlers(Host),
-    gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_HTTP_UPLOAD),
-    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_HTTP_UPLOAD),
-    mod_disco:unregister_feature(Host, ?NS_HTTP_UPLOAD).
+    ejabberd_router:register_route(UploadHost),
+    ?INFO_MSG("initialized on host: ~p with Opts=~p", [Host, Opts]),
+    State = #state{
+               host = Host, upload_host = UploadHost, name = Name,
+               access = Access, max_size = MaxSize,
+               secret_length = SecretLength, jid_in_url = JIDinURL,
+               file_mode = FileMode, dir_mode = DirMode,
+               docroot = expand_home(DocRoot),
+               put_prefix = expand_host(PutPrefix, UploadHost),
+               get_prefix = expand_host(GetPrefix, UploadHost),
+               service_url = ServiceURL},
+    {ok, State}.
+
+terminate(Reason, #state{upload_host = UploadHost, host = Host}) ->
+    ?DEBUG("Stopping HTTP upload process for ~s: ~p", [Host, Reason]),
+    ejabberd_router:unregister_route(UploadHost),
+    ok.
 
 handle_call({use_slot, Slot}, _From, #state{host = Host,
                                             file_mode = FileMode,
@@ -152,56 +211,69 @@ handle_call(Request, From, State) ->
     ?ERROR_MSG("Got unexpected request from ~p: ~p", [From, Request]),
     {noreply, State}.
 
-handle_cast(_Msg, State) ->
+handle_cast(Request, State) ->
+    ?ERROR_MSG("Got unexpected request: ~p", [Request]),
     {noreply, State}.
 
-handle_info(_Info, State) ->
+handle_info({route, From, To, #xmlel{name = <<"iq">>} = Stanza}, State) ->
+    ?INFO_MSG("#### route: From: ~p, To: ~p, Stanza: ~p", [From, To, Stanza]),
+    Request = jlib:iq_query_info(Stanza),
+    {Reply, NewState} = case process_iq(From, Request, State) of
+                            R when is_record(R, iq) ->
+                                {R, State};
+                            {R, S} ->
+                                {R, S};
+                            not_request ->
+                                {none, State}
+                        end,
+    if Reply /= none ->
+            ejabberd_router:route(To, From, jlib:iq_to_xml(Reply));
+       true ->
+            ok
+    end,
+    {noreply, NewState};
+handle_info({slot_timed_out, Slot}, State) ->
+    NewState = del_slot(Slot, State),
+    {noreply, NewState};
+handle_info(Info, State) ->
+    ?ERROR_MSG("Got unexpected info: ~p", [Info]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+
 %%====================================================================
-%% Hook callbacks
+%% XMPP requests handling
 %%====================================================================
-iq_http_upload(_From, To, #iq{type = get, xmlns = ?NS_DISCO_INFO, lang = Lang} = IQ) ->
-    Host = To#jid.lserver,
-    AddInfo = ejabberd_hooks:run_fold(disco_info, Host, [],
-                                      [Host, ?MODULE, <<"">>, <<"">>]),
-    Name = config(Host, name),
+process_iq(_From, #iq{type = get, xmlns = ?NS_DISCO_INFO, lang = Lang} = IQ,
+           #state{upload_host = UploadHost, name = Name}) ->
+    ?INFO_MSG("get discovery info. To: ~p", [UploadHost]),
+    AddInfo = ejabberd_hooks:run_fold(disco_info, UploadHost, [],
+                                      [UploadHost, ?MODULE, <<"">>, <<"">>]),
     IQ#iq{type = result,
           sub_el = [#xmlel{name = <<"query">>,
                            attrs = [{<<"xmlns">>, ?NS_DISCO_INFO}],
                            children = iq_disco_info(Lang, Name) ++ AddInfo}]};
-iq_http_upload(#jid{luser = LUser, lserver = LServer} = From, #jid{lserver = Host} = _To,
-               #iq{type = get, xmlns = XMLNS, lang = Lang, sub_el = SubEl} = IQ) ->
-
+process_iq(#jid{luser = LUser, lserver = LServer} = From,
+           #iq{type = get, xmlns = XMLNS, lang = Lang, sub_el = SubEl} = IQ,
+           #state{upload_host = UploadHost, access = Access} = State)
+  when XMLNS == ?NS_HTTP_UPLOAD;
+       XMLNS == ?NS_HTTP_UPLOAD_OLD ->
     User = <<LUser/binary, $@, LServer/binary>>,
-    Access = config(Host, access),
-
-    case acl:match_rule(Host, Access, From) of
+    case acl:match_rule(UploadHost, Access, From) of
         allow ->
             case parse_request(SubEl, Lang) of
                 {ok, File, Size, ContentType} ->
-                    ServiceURL = config(Host, service_url),
-                    MaxSize = config(Host, max_size),
-                    JIDinURL = config(Host, jid_in_url),
-                    SecretLength = config(Host, secret_length),
-                    case create_slot(ServiceURL, MaxSize, JIDinURL, SecretLength,
-                                     User, File, Size, ContentType, Lang) of
+                    case create_slot(State, User, File, Size, ContentType, Lang) of
                         {ok, Slot} ->
                             {ok, Timer} = timer:send_after(?SLOT_TIMEOUT,
                                                            {slot_timed_out, Slot}),
-
-                            GetPrefix = config(Host, get_prefix),
-                            PutPrefix = config(Host, put_prefix),
-
-                            add_slot(Host, Slot, Size, Timer),
-
-                            SlotEl = slot_el(Slot, PutPrefix, GetPrefix, XMLNS),
-                            IQ#iq{type = result, sub_el = [SlotEl]};
-                        {ok, PutPrefix, GetPrefix} ->
-                            SlotEl = slot_el(PutPrefix, GetPrefix, XMLNS),
+                            NewState = add_slot(Slot, Size, Timer, State),
+                            SlotEl = slot_el(Slot, State, XMLNS),
+                            {IQ#iq{type = result, sub_el = [SlotEl]}, NewState};
+                        {ok, PutURL, GetURL} ->
+                            SlotEl = slot_el(PutURL, GetURL, XMLNS),
                             IQ#iq{type = result, sub_el = [SlotEl]};
                         {error, Error} ->
                             IQ#iq{type = error, sub_el = [SubEl, Error]}
@@ -214,13 +286,11 @@ iq_http_upload(#jid{luser = LUser, lserver = LServer} = From, #jid{lserver = Hos
             ?DEBUG("Denying HTTP upload slot request from ~s", [User]),
             IQ#iq{type = error, sub_el = [SubEl, ?ERR_FORBIDDEN]}
     end;
-iq_http_upload(_From, _To, #iq{sub_el = SubEl} = IQ) ->
+process_iq(_From, #iq{sub_el = SubEl} = IQ, _State) ->
     IQ#iq{type = error, sub_el = [SubEl, ?ERR_NOT_ALLOWED]};
-iq_http_upload(_From, _To, reply) ->
+process_iq(_From, reply, _State) ->
     not_request;
-iq_http_upload(_From, _To, error) ->
-    not_request;
-iq_http_upload(_From, _To, invalid) ->
+process_iq(_From, invalid, _State) ->
     not_request.
 
 -spec remove_user(binary(), binary()) -> ok.
@@ -262,17 +332,6 @@ del_tree(Dir) ->
 %%====================================================================
 %% Internal functions
 %%====================================================================
-add_hooks_handlers(Host) ->
-    ejabberd_hooks:add(remove_user, Host,
-                       ?MODULE, remove_user, 50),
-    ejabberd_hooks:add(anonymous_purge_hook, Host,
-                       ?MODULE, remove_user, 50).
-
-remove_hooks_handlers(Host) ->
-    ejabberd_hooks:delete(remove_user, Host,
-                          ?MODULE, remove_user, 50),
-    ejabberd_hooks:delete(anonymous_purge_hook, Host,
-                          ?MODULE, remove_user, 50).
 
 wait_for_process_to_stop(Pid) ->
     Ref = erlang:monitor(process, Pid),
@@ -284,91 +343,6 @@ wait_for_process_to_stop(Pid) ->
             {error, still_running}
     end.
 
--spec init_state(binary(), binary()) -> binary().
-init_config(Host, Opts) ->
-    UploadHost = gen_mod:get_opt_host(Host, Opts, <<"upload.@HOST@">>),
-    Name = gen_mod:get_opt(name, Opts, <<"HTTP File Upload">>),
-    Access = gen_mod:get_opt(access, Opts, local),
-    MaxSize = gen_mod:get_opt(max_size, Opts, infinity),
-    SecretLength = gen_mod:get_opt(secret_length, Opts, 40),
-    JIDinURL = gen_mod:get_opt(jid_in_url, Opts, sha1),
-    DocRoot = gen_mod:get_opt(docroot, Opts, <<"@HOME@/upload">>),
-    FileMode = gen_mod:get_opt(file_mode, Opts, undefined),
-    DirMode = gen_mod:get_opt(dir_mode, Opts, undefined),
-    PutPrefix = gen_mod:get_opt(put_prefix, Opts, <<"http://@HOST@:5444">>),
-    GetPrefix = gen_mod:get_opt(get_prefix, Opts, PutPrefix),
-    ServiceURL = gen_mod:get_opt(service_url, Opts),
-    case ServiceURL of
-        undefined ->
-            ok;
-        <<"http://", _/binary>> ->
-            application:start(inets);
-        <<"https://", _/binary>> ->
-            application:start(inets),
-            application:start(crypto),
-            application:start(public_key),
-            application:start(ssl)
-    end,
-
-    case DirMode of
-        undefined ->
-            ok;
-        Mode ->
-            file:change_mode(DocRoot, Mode)
-    end,
-
-    ets:new(gen_mod:get_module_proc(Host, config), [set, named_table]),
-    ets:new(gen_mod:get_module_proc(Host, slots), [set, named_table]),
-
-    ets:insert(gen_mod:get_module_proc(Host, config), {host, Host}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {upload_host, UploadHost}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {name, Name}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {access, Access}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {max_size, MaxSize}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {secret_length, SecretLength}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {jid_in_url, JIDinURL}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {file_mode, FileMode}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {dir_mode, DirMode}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {docroot, expand_home(str:strip(DocRoot, right, $/))}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {put_prefix, expand_host(str:strip(PutPrefix, right, $/), UploadHost)}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {get_prefix, expand_host(str:strip(GetPrefix, right, $/), UploadHost)}),
-    ets:insert(gen_mod:get_module_proc(Host, config), {service_url, ServiceURL}),
-
-    %%    ejabberd_router:register_route(Host),
-    ok.
-
-init_state(Host, Opts) ->
-    ok = init_config(Host, Opts),
-    UploadHost = config(Host, upload_host),
-    Name = config(Host, name),
-    Access = config(Host, access),
-    MaxSize = config(Host, max_size),
-    SecretLength = config(Host, secret_length),
-    JIDinURL = config(Host, jid_in_url),
-    FileMode = config(Host, file_mode),
-    DirMode = config(Host, dir_mode),
-    DocRoot = config(Host, docroot),
-    PutPrefix = config(Host, put_prefix),
-    GetPrefix = config(Host, get_prefix),
-    ServiceURL = config(Host, service_url),
-    State = #state{
-               host = Host, upload_host = UploadHost, name = Name,
-               access = Access, max_size = MaxSize,
-               secret_length = SecretLength, jid_in_url = JIDinURL,
-               file_mode = FileMode, dir_mode = DirMode,
-               docroot = DocRoot,
-               put_prefix = PutPrefix, get_prefix = GetPrefix,
-               service_url = ServiceURL},
-    %%    Proc = gen_mod:get_module_proc(Host, ?LOOPNAME),
-    %%    Pid = case whereis(Proc) of
-    %%              undefined ->
-    %%                  SendLoop = spawn(?MODULE, send_loop, [State]),
-    %%                  register(Proc, SendLoop),
-    %%                  SendLoop;
-    %%              Loop ->
-    %%                  Loop
-    %%          end,
-    {ok, State}.
 
 iq_disco_info(Lang, Name) ->
     [#xmlel{name = <<"identity">>,
@@ -404,10 +378,10 @@ parse_request(#xmlel{name = <<"request">>, attrs = Attrs} = Request, Lang) ->
     end;
 parse_request(_El, _Lang) -> {error, ?ERR_BAD_REQUEST}.
 
--spec create_slot(binary(), binary(), binary(), binary(),
-                  binary(), binary(), pos_integer(), binary(), binary())
+-spec create_slot(state(), binary(), binary(), pos_integer(), binary(),
+                  binary())
                  -> {ok, slot()} | {ok, binary(), binary()} | {error, xmlel()}.
-create_slot(undefined, MaxSize, _JIDinURL, _SecretLength,
+create_slot(#state{service_url = undefined, max_size = MaxSize},
             User, File, Size, _ContentType, Lang) when MaxSize /= infinity,
                                                        Size > MaxSize ->
     Text = <<"File larger than ", (integer_to_binary(MaxSize))/binary,
@@ -415,15 +389,17 @@ create_slot(undefined, MaxSize, _JIDinURL, _SecretLength,
     ?INFO_MSG("Rejecting file ~s from ~s (too large: ~B bytes)",
               [File, User, Size]),
     {error, ?ERRT_NOT_ACCEPTABLE(Lang, Text)};
-create_slot(undefined, _MaxSize, JIDinURL, SecretLength,
+create_slot(#state{service_url = undefined,
+                   jid_in_url = JIDinURL,
+                   secret_length = SecretLength},
             User, File, _Size, _ContentType, _Lang) ->
     UserStr = make_user_string(User, JIDinURL),
     RandStr = make_rand_string(SecretLength),
     FileStr = make_file_string(File),
     ?INFO_MSG("Got HTTP upload slot for ~s (file: ~s)", [User, File]),
     {ok, [UserStr, RandStr, FileStr]};
-create_slot(ServiceURL, _MaxSize, _JIDinURL, _SecretLength,
-            User, File, Size, ContentType, _Lang) ->
+create_slot(#state{service_url = ServiceURL}, User, File, Size, ContentType,
+            _Lang) ->
     Options = [{body_format, binary}, {full_result, false}],
     HttpOptions = [{timeout, ?SERVICE_REQUEST_TIMEOUT}],
     SizeStr = integer_to_binary(Size),
@@ -464,32 +440,24 @@ create_slot(ServiceURL, _MaxSize, _JIDinURL, _SecretLength,
     end.
 
 %% TODO: We need refactoring slots storage
-add_slot(Host, Slot, Size, Timer) ->
-    ets:insert(gen_mod:get_module_proc(Host, slots), {Slot, {Size, Timer}}).
+-spec add_slot(slot(), pos_integer(), timer:tref(), state()) -> state().
+add_slot(Slot, Size, Timer, #state{slots = Slots} = State) ->
+    NewSlots = dict:store(Slot, {Size, Timer}, Slots),
+    State#state{slots = NewSlots}.
 
-get_slot(Host, Slot) ->
-    {Slot, Value} = ets:lookup(gen_mod:get_module_proc(Host, slots), Slot),
-    {ok ,Value}.
+-spec get_slot(slot(), state()) -> {ok, {pos_integer(), timer:tref()}} | error.
+get_slot(Slot, #state{slots = Slots}) ->
+    dict:find(Slot, Slots).
 
-del_slot(Host, Slot) ->
-    ets:delete(gen_mod:get_module_proc(Host, slots), Slot).
+-spec del_slot(slot(), state()) -> state().
+del_slot(Slot, #state{slots = Slots} = State) ->
+    NewSlots = dict:erase(Slot, Slots),
+    State#state{slots = NewSlots}.
 
-config(Host, Key) ->
-    config(Host, Key, undefined).
-config(Host, Key, Default) ->
-    case catch ets:lookup(gen_mod:get_module_proc(Host, config), Key) of
-        [{Key, Value}] -> Value;
-        _ -> Default
-    end.
-
-%%-spec slot_el(slot() | binary(), state() | binary(), binary()) -> xmlel().
-
-slot_el(Slot, PutPrefix, GetPrefix, XMLNS) ->
+-spec slot_el(slot() | binary(), state() | binary(), binary()) -> xmlel().
+slot_el(Slot, #state{put_prefix = PutPrefix, get_prefix = GetPrefix}, XMLNS) ->
     PutURL = str:join([PutPrefix | Slot], <<$/>>),
     GetURL = str:join([GetPrefix | Slot], <<$/>>),
-    slot_el(PutURL, GetURL, XMLNS).
-
-slot_el(PutURL, GetURL, XMLNS) ->
     #xmlel{name = <<"slot">>,
            attrs = [{<<"xmlns">>, XMLNS}],
            children = [#xmlel{name = <<"put">>,
