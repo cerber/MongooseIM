@@ -63,7 +63,6 @@
 -export([start_link/3]).
 
 %% gen_mod callbacks
-%%-export([start/2, stop/1, iq_http_upload/3]).
 -export([start/2, stop/1]).
 
 %% gen_server callbacks
@@ -200,7 +199,7 @@ handle_call({use_slot, Slot}, _From, #state{host = Host,
             NewState = del_slot(Host, Slot),
             Path = str:join([DocRoot | Slot], <<$/>>),
             {reply, {ok, Size, Path, FileMode, DirMode}, NewState};
-        _ ->
+        error ->
             {reply, {error, <<"Invalid slot">>}, State}
     end;
 handle_call(get_docroot, _From, #state{docroot = DocRoot} = State) ->
@@ -292,6 +291,92 @@ process_iq(_From, reply, _State) ->
     not_request;
 process_iq(_From, invalid, _State) ->
     not_request.
+
+%%====================================================================
+%% Mongoose IM Callbacks
+%%====================================================================
+%% -spec process([binary()]),
+%%              #request{}) -> {pos_integer(), [{binary(), binary()}], binary()}.
+%% process(LocalPath, #request{method = 'PUT', host = Host, ip = IP,
+%%                             data = Data}) ->
+%%     Proc = gen_mod:get_module_proc(Host, ?MODULE),
+%%     case catch gen_server:call(Proc, {use_slot, LocalPath}) of
+%%         {ok, Size, Path, FileMode, DirMode} when byte_size(Data) == Size ->
+%%             ?DEBUG("Storing file from ~s for ~s: ~s",
+%%                    [?ADDR_TO_STR(IP), Host, Path]),
+%%             case store_file(Path, Data, FileMode, DirMode) of
+%%                 ok ->
+%%                     http_response(Host, 201);
+%%                 {error, Error} ->
+%%                     ?ERROR_MSG("Cannot store file ~s from ~s for ~s: ~s",
+%%                                [Path, ?ADDR_TO_STR(IP), Host, Error]),
+%%                     http_response(Host, 500)
+%%             end;
+%%         {ok, Size, Path} ->
+%%             ?INFO_MSG("Rejecting file ~s from ~s for ~s: Size is ~B, not ~B",
+%%                       [Path, ?ADDR_TO_STR(IP), Host, byte_size(Data), Size]),
+%%             http_reponse(Host, 413);
+%%         {error, Error} ->
+%%             ?INFO_MSG("Rejecting file from ~s for ~s: ~p",
+%%                       [?ADDR_TO_STR(IP), Host, Error]),
+%%             http_reponse(Host, 403);
+%%         Error ->
+%%             ?ERROR_MSG("Cannot handle PUT request from ~s for ~s: ~p",
+%%                        [?ADDR_TO_STR(IP), Host, Error]),
+%%             http_reponse(Host, 500)
+%%     end;
+%% process(LocalPath, #request{method = Method, host = Host, ip = IP})
+%%   when Method == 'GET';
+%%        Method == 'HEAD' ->
+%%     Proc = gen_mod:get_module_proc(Host, ?MODULE),
+%%     case catch gen_server:call(Proc, get_docroot) of
+%%         {ok, DocRoot} ->
+%%             Path = str:join([DocRoot | LocalPath], <<$/>>),
+%%             case file:read_file(Path) of
+%%                 {ok, Data} ->
+%%                     ?INFO_MSG("Serving ~s to ~s", [Path, ?ADDR_TO_STR(IP)]),
+%%                     FileName = lists:last(LocalPath),
+%%                     ContentType = guess_content_type(FileName),
+%%                     Headers1 = case ContentType of
+%%                                    <<"image/", _SubType/binary>> -> [];
+%%                                    <<"text/", _SubType/binary>> -> [];
+%%                                    _ ->
+%%                                        [{<<"Content-Disposition">>,
+%%                                          <<"attachment; filename=",
+%%                                            $", FileName/binary, $">>}]
+%%                                end,
+%%                     Headers2 = [{<<"Content-Type">>, ContentType} | Headers1],
+%%                     http_reponse(Host, 200, Headers2, Data);
+%%                 {error, eaccess} ->
+%%                     ?INFO_MSG("Cannot serve ~s to ~s: Permission denied",
+%%                               [Path, ?ADDR_TO_STR(IP)]),
+%%                     http_reponse(Host, 403);
+%%                 {error, enoent} ->
+%%                     ?INFO_MSG("Cannot serve ~s to ~s: No such file or directory",
+%%                               [Path, ?ADDR_TO_STR(IP)]),
+%%                     http_response(Host, 404);
+%%                 {error, eisdir} ->
+%%                     ?INFO_MSG("Cannot serve ~s to ~s: Is a directory",
+%%                               [Path, ?ADDR_TO_STR(IP)]),
+%%                     http_response(Host, 404);
+%%                 {error, Error} ->
+%%                     ?INFO_MSG("Cannot serve ~s to ~s: ~p",
+%%                               [Path, ?ADDR_TO_STR(IP), Error]),
+%%                     http_response(Host, 500)
+%%             end;
+%%         Error ->
+%%             ?ERROR_MSG("Cannot handle ~s request from ~s for ~s: ~p",
+%%                        [Method, ?ADDR_TO_STR(IP), Host, Error]),
+%%             http_response(Host, 500)
+%%     end;
+%% process(_LocalPath, #request{method = 'OPTIONS', host = Host, ip = IP}) ->
+%%     ?DEBUG("Responding to OPTIONS request from ~s for ~s",
+%%            [?ADDR_TO_STR(IP), Host]),
+%%     http_reponse(Host, 200);
+%% process(_LocalPath, #request{method = Method, host = Host, ip = IP}) ->
+%%     ?DEBUG("Rejecting ~s request from ~s for ~s",
+%%            [Method, ?ADDR_TO_STR(IP), Host]),
+%%     http_reponse(Host, 405, [{<<"Allow">>, <<"OPTIONS, HEAD, GET, PUT">>}]).
 
 -spec remove_user(binary(), binary()) -> ok.
 remove_user(User, Server) ->
