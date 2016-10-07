@@ -94,9 +94,7 @@ start(Host, Opts) ->
     supervisor:start_child(?SUPERVISOR, HttpUploadSpec).
 
 stop(Host) ->
-    case gen_mod:get_module_opt(Host, ?MODULE, rm_on_unregister,
-                                fun(B) when is_boolean(B) -> B end,
-                                true) of
+    case gen_mod:get_module_opt(Host, ?MODULE, rm_on_unregister, true) of
         true ->
             ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
             ejabberd_hooks:delete(anonymous_purge_hook, Host, ?MODULE, remove_user, 50);
@@ -114,7 +112,7 @@ stop(Host) ->
 %% gen_server callbacks
 %%====================================================================
 init([Host, Opts]) ->
-    process_flag(trap_exit, true),
+%%    process_flag(trap_exit, true),
     UploadHost = gen_mod:get_opt_host(Host, Opts, ?DEFAULT_HOST),
     Name = gen_mod:get_opt(name, Opts, ?DEFAULT_NAME),
     Access = gen_mod:get_opt(access, Opts, local),
@@ -229,6 +227,9 @@ process_iq(_From, #iq{type = get, xmlns = ?NS_DISCO_INFO, lang = Lang} = IQ,
           sub_el = [#xmlel{name = <<"query">>,
                            attrs = [{<<"xmlns">>, ?NS_DISCO_INFO}],
                            children = iq_disco_info(Lang, Name) ++ AddInfo}]};
+process_iq(_From, #iq{type = get} = IQ, _State) ->
+    ?INFO_MSG("Received IQ: ~p", [IQ]),
+    not_request;
 process_iq(#jid{luser = LUser, lserver = LServer} = From,
            #iq{type = get, xmlns = XMLNS, lang = Lang, sub_el = SubEl} = IQ,
            #state{upload_host = UploadHost, access = Access} = State)

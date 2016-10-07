@@ -10,11 +10,11 @@
 -author("dmytro@xpyriens.com").
 -compile(export_all).
 
-%%-include_lib("escalus/include/escalus.hrl").
-%%-include_lib("common_test/include/ct.hrl").
-%%-include_lib("eunit/include/eunit.hrl").
-%%-include_lib("escalus/include/escalus_xmlns.hrl").
-%%-include_lib("exml/include/exml.hrl").
+-include_lib("escalus/include/escalus.hrl").
+-include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("escalus/include/escalus_xmlns.hrl").
+-include_lib("exml/include/exml.hrl").
 
 -define(NS_HTTP_UPLOAD, <<"urn:xmpp:http:upload">>).
 
@@ -41,12 +41,12 @@ end_per_suite(Config) ->
     escalus:end_per_suite(Config).
 
 init_per_group(http_upload, Config) ->
-    dynamic_modules:start(<<"localhost">>, mod_http_upload, []),
-    escalus:create_users(Config, escalus:get_users([bob])).
+    %%    dynamic_modules:start(<<"localhost">>, mod_http_upload, []),
+    escalus:create_users(Config, escalus:get_users([alice])).
 
 end_per_group(_Group, Config) ->
-    dynamic_modules:stop(<<"localhost">>, mod_http_upload),
-    escalus:delete_users(Config, escalus_users:get_users([bob])).
+    %%  dynamic_modules:stop(<<"localhost">>, mod_http_upload),
+    escalus:delete_users(Config, escalus_users:get_users([alice])).
 
 init_per_testcase(CaseName, Config) ->
     escalus:init_per_testcase(CaseName, Config).
@@ -58,11 +58,12 @@ end_per_testcase(CaseName, Config) ->
 %% Service discovery test
 %%--------------------------------------------------------------------
 http_upload_service_discovery(Config) ->
-    escalus:story(Config, [{bob, 1}],
-		  fun(Bob) ->
-			  SID = escalus_client:server(Bob),
-			  Result = escalus:send_and_wait(Bob,
-							 escalus_stanza:disco_info(SID)),
-			  escalus:assert(is_iq_result, Result),
-			  escalus:assert(has_feature, [?NS_HTTP_UPLOAD], Result)
-		  end).
+    escalus:story(
+      Config, [{alice, 1}],
+      fun(Client) ->
+              JID = escalus_client:server(Client),
+              Result = escalus:send_and_wait(Client,
+                                             escalus_stanza:disco_info(JID)),
+              escalus:assert(is_iq_result, Result),
+              escalus:assert(has_feature, [?NS_HTTP_UPLOAD], Result)
+      end).
