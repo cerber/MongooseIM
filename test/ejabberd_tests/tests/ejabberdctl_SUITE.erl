@@ -247,8 +247,11 @@ num_active_users(Config) ->
     {Mega, Secs, _} = erlang:now(),
     Now = Mega*1000000+Secs,
     set_last(AliceName, Domain, Now),
+    {Result, _} = ejabberdctl("num_active_users", [Domain, "5"], Config),
     set_last(MikeName, Domain, Now - 864000), %% Now - 10 days
-    {"1\n", _} = ejabberdctl("num_active_users", [Domain, "5"], Config).
+    %We expect than number of active user in last 5 days is the same as before
+    %the change above
+    {Result, _} = ejabberdctl("num_active_users", [Domain, "5"], Config).
 
 delete_old_users(Config) ->
     {AliceName, Domain, _} = get_user_data(alice, Config),
@@ -636,12 +639,14 @@ push_roster_all(Config) ->
                 escalus:send(Alice, escalus_stanza:roster_get()),
                 Roster1 = escalus:wait_for_stanza(Alice),
                 escalus:assert(is_roster_result, Roster1),
-                escalus:assert(roster_contains, [bob], Roster1),
+                BobJid = escalus_client:short_jid(Bob),
+                escalus:assert(roster_contains, [BobJid], Roster1),
 
                 escalus:send(Bob, escalus_stanza:roster_get()),
                 Roster2 = escalus:wait_for_stanza(Bob),
                 escalus:assert(is_roster_result, Roster2),
-                escalus:assert(roster_contains, [alice], Roster2),
+                AliceJid = escalus_client:short_jid(Alice),
+                escalus:assert(roster_contains, [AliceJid], Roster2),
 
                 escalus:send(Alice, escalus_stanza:roster_remove_contact(bob)), % cleanup
                 escalus:send(Bob, escalus_stanza:roster_remove_contact(alice)) % cleanup
