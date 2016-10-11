@@ -142,7 +142,7 @@ process(Method, Req)
                     http_response(Host, 500)
             end;
         Error ->
-            ?ERROR_MSG("### Hi Gideon! Cannot handle ~s request from ~s for ~s: ~p",
+            ?ERROR_MSG("Cannot handle ~s request from ~s for ~s: ~p",
                        [Method, ?ADDR_TO_STR(IP), Host, Error]),
             http_response(Host, 500)
     end;
@@ -171,9 +171,9 @@ http_response(Host, Code, ExtraHeaders) ->
 %%-spec http_response(binary(), 100..599, [{binary(), binary()}], binary()) ->
 %%                           cowboy_req:req().
 http_response(_Host, Code, ExtraHeaders, Body) ->
+    Version = list_to_binary(?VERSION),
     ServerHeader = {<<"Server">>,
-    %%                 <<"MongooseIM ", list_to_binary(?VERSION)/binary>>},
-                        <<"MongooseIM "/binary>>},
+                    <<"MongooseIM ", Version/binary>>},
     CustomHeaders = [],
     Headers = case proplists:is_defined(<<"Content-Type">>, ExtraHeaders) of
                   true ->
