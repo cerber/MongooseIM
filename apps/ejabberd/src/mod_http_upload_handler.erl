@@ -15,15 +15,10 @@
 %% common callbackks
 -export([init/3]).
 
-%% cowboy_http_handler callbacks
--export([handle/2,
-         terminate/3]).
-
 -record(state, {}).
 
 -type option() :: {atom(), any()}.
 -type state() :: #state{}.
-
 
 -define(ADDR_TO_STR(IP), jlib:ip_to_list(IP)).
 
@@ -53,50 +48,6 @@
          {<<".xz">>, <<"application/x-xz">>},
          {<<".zip">>, <<"application/zip">>}]).
 
-%% -record(http_req, {
-%% 	%% Transport.
-%% 	socket = undefined :: any(),
-%% 	transport = undefined :: undefined | module(),
-%% 	connection = keepalive :: keepalive | close,
-
-%% 	%% Request.
-%% 	pid = undefined :: pid(),
-%% 	method = <<"GET">> :: binary(),
-%% 	version = 'HTTP/1.1' :: cowboy:http_version(),
-%% 	peer = undefined :: undefined | {inet:ip_address(), inet:port_number()},
-%% 	host = undefined :: undefined | binary(),
-%% 	host_info = undefined :: undefined | cowboy_router:tokens(),
-%% 	port = undefined :: undefined | inet:port_number(),
-%% 	path = undefined :: binary(),
-%% 	path_info = undefined :: undefined | cowboy_router:tokens(),
-%% 	qs = undefined :: binary(),
-%% 	qs_vals = undefined :: undefined | list({binary(), binary() | true}),
-%% 	bindings = undefined :: undefined | cowboy_router:bindings(),
-%% 	headers = [] :: cowboy:http_headers(),
-%% 	p_headers = [] :: [any()],
-%% 	cookies = undefined :: undefined | [{binary(), binary()}],
-%% 	meta = [] :: [{atom(), any()}],
-
-%% 	%% Request body.
-%% 	body_state = waiting :: waiting | done | {stream, non_neg_integer(),
-%% 		transfer_decode_fun(), any(), content_decode_fun()},
-%% 	buffer = <<>> :: binary(),
-%% 	multipart = undefined :: undefined | {binary(), binary()},
-
-%% 	%% Response.
-%% 	resp_compress = false :: boolean(),
-%% 	resp_state = waiting :: locked | waiting | waiting_stream
-%% 		| chunks | stream | done,
-%% 	resp_headers = [] :: cowboy:http_headers(),
-%% 	resp_body = <<>> :: iodata() | resp_body_fun()
-%% 		| {non_neg_integer(), resp_body_fun()}
-%% 		| {chunked, resp_chunked_fun()},
-
-%% 	%% Functions.
-%% 	onresponse = undefined :: undefined | already_called
-%% 		| cowboy:onresponse_fun()
-%% }).
-
 %%--------------------------------------------------------------------
 %% common callback
 %%--------------------------------------------------------------------
@@ -104,28 +55,12 @@
           -> {ok, cowboy_req:req(), state()} |
              {shutdown, cowboy_req:req(), state()} |
              {upgrade, protocol, cowboy_websocket, cowboy_req:req(), state()}.
-init({tcp, http}, Req, Opts) ->
-    {Method, _Req} = cowboy_req:method(Req),
+init({tcp, http}, Req, _Opts) ->
+    {Method, _} = cowboy_req:method(Req),
     {ok, process(Method, Req), #state{}};
-init(_, Req, Opts) ->
-    ?INFO_MSG("Unsupported protocol. Req: ~p, Opts: ~p",
-              [Req, Opts]),
+init(_Method, Req, Opts) ->
+    ?INFO_MSG("Unsupported protocol. Req: ~p, Opts: ~p", [Req, Opts]),
     {shutdown, Req, #state{}}.
-
-%%--------------------------------------------------------------------
-%% cowboy_http_handler callbacks
-%%--------------------------------------------------------------------
--spec handle(cowboy_req:req(), state()) -> {ok, cowboy_req:req(), state()}.
-handle(Req, State) ->
-    ?INFO_MSG("Handle Request: ~p, State: ~p",
-              [Req, State]),
-    {ok, Req, State}.
-
--spec terminate(any(), cowboy_req:req(), state()) -> ok.
-terminate(Reason, Req, State) ->
-    ?INFO_MSG("Terminate with reason: ~p and Request: ~p. State: ~p",
-              [Reason, Req, State]),
-    ok.
 
 -spec process(binary(), cowboy_req:req()) -> cowboy_req:req().
 process(<<"PUT">>, Req) ->
@@ -163,10 +98,11 @@ process(<<"PUT">>, Req) ->
             http_response(Host, 500)
     end;
 process(Method, Req)
-  when Method == 'GET';
-       Method == <<"GET">>;
+  when Method == <<"GET">>;
        Method == <<"HEAD">> ->
     [Host, {IP, _Port}, LocalPath] = cowboy_req:get([host, peer, path], Req),
+    ?DEBUG("### Request processing to host: ~p, from ~p, LocalPath: ~p",
+           [Host, ?ADDR_TO_STR(IP), LocalPath]),
     Proc = gen_mod:get_module_proc(Host, ?MODULE),
     case catch gen_server:call(Proc, get_docroot) of
         {ok, DocRoot} ->
@@ -248,24 +184,16 @@ http_response(_Host, Code, ExtraHeaders, Body) ->
     cowboy_req:reply(Code, Headers, Body).
 
 -spec code_to_message(100..599) -> binary().
-code_to_message(201) ->
-    <<"Upload successful">>;
-code_to_message(403) ->
-    <<"Forbidden">>;
-code_to_message(404) ->
-    <<"Not found">>;
-code_to_message(405) ->
-    <<"Method not allowed">>;
-code_to_message(413) ->
-    <<"File size dowsn't match requested size">>;
-code_to_message(500) ->
-    <<"Internal server error">>;
-code_to_message(_Code) ->
-    <<"">>.
+code_to_message(201) -> <<"Upload successful">>;
+code_to_message(403) -> <<"Forbidden">>;
+code_to_message(404) -> <<"Not found">>;
+code_to_message(405) -> <<"Method not allowed">>;
+code_to_message(413) -> <<"File size dowsn't match requested size">>;
+code_to_message(500) -> <<"Internal server error">>;
+code_to_message(_Code) -> <<"">>.
 
 -spec store_file(file:filename_all(), binary(), integer(), integer())
                 -> ok | {error, term()}.
-
 store_file(Path, Data, FileMode, DirMode) ->
     try
         ok = filelib:ensure_dir(Path),

@@ -117,7 +117,7 @@ init([Host, Opts]) ->
     process_flag(trap_exit, true),
     UploadHost = gen_mod:get_opt_host(Host, Opts, ?DEFAULT_HOST),
     Name = gen_mod:get_opt(name, Opts, ?DEFAULT_NAME),
-    Access = gen_mod:get_opt(access, Opts, local),
+    Access = gen_mod:get_opt(access, Opts, upload),
     MaxSize = gen_mod:get_opt(max_size, Opts, infinity),
     SecretLength = gen_mod:get_opt(secret_length, Opts, 40),
     JIDinURL = gen_mod:get_opt(jid_in_url, Opts, ?DEFAULT_JIDINURL),
@@ -147,7 +147,7 @@ init([Host, Opts]) ->
     end,
 
     ejabberd_router:register_route(UploadHost),
-    ?INFO_MSG("initialized on host: ~p with Opts=~p", [Host, Opts]),
+    ?DEBUG("initialized on host: ~p with Opts=~p", [Host, Opts]),
     State = #state{
                host = Host, upload_host = UploadHost, name = Name,
                access = Access, max_size = MaxSize,
@@ -190,21 +190,16 @@ handle_cast(Request, State) ->
     {noreply, State}.
 
 handle_info({route, From, To, #xmlel{name = <<"iq">>} = Stanza}, State) ->
-    ?INFO_MSG("#### route: From: ~p, To: ~p, Stanza: ~p", [From, To, Stanza]),
+    ?DEBUG("#### route: From: ~p, To: ~p, Stanza: ~p", [From, To, Stanza]),
     Request = jlib:iq_query_info(Stanza),
-    {Reply, NewState} = case process_iq(From, Request, State) of
-                            R when is_record(R, iq) ->
-                                {R, State};
-                            {R, S} ->
-                                {R, S};
-                            not_request ->
-                                {none, State}
-                        end,
-    if Reply /= none ->
-            ejabberd_router:route(To, From, jlib:iq_to_xml(Reply));
-       true ->
-            ok
-    end,
+    NewState = case process_iq(From, Request, State) of
+                   {Reply, State1}
+                     when is_record(Reply, iq) ->
+                       ejabberd_router:route(To, From, jlib:iq_to_xml(Reply)),
+                       State1;
+                   _ ->
+                       State
+               end,
     {noreply, NewState};
 handle_info({slot_timed_out, Slot}, State) ->
     NewState = del_slot(Slot, State),
@@ -221,14 +216,15 @@ code_change(_OldVsn, State, _Extra) ->
 %% XMPP requests handling
 %%====================================================================
 process_iq(_From, #iq{type = get, xmlns = ?NS_DISCO_INFO, lang = Lang} = IQ,
-           #state{upload_host = UploadHost, name = Name}) ->
-    ?INFO_MSG("get discovery info. To: ~p", [UploadHost]),
+           #state{upload_host = UploadHost, name = Name} = State) ->
     AddInfo = ejabberd_hooks:run_fold(disco_info, UploadHost, [],
                                       [UploadHost, ?MODULE, <<"">>, <<"">>]),
-    IQ#iq{type = result,
-          sub_el = [#xmlel{name = <<"query">>,
-                           attrs = [{<<"xmlns">>, ?NS_DISCO_INFO}],
-                           children = iq_disco_info(Lang, Name) ++ AddInfo}]};
+    {IQ#iq{type = result,
+           sub_el =
+               [#xmlel{name = <<"query">>,
+                       attrs = [{<<"xmlns">>, ?NS_DISCO_INFO}],
+                       children = iq_disco_info(Lang, Name) ++ AddInfo}]},
+     State};
 process_iq(#jid{luser = LUser, lserver = LServer} = From,
            #iq{type = get, xmlns = XMLNS, lang = Lang, sub_el = SubEl} = IQ,
            #state{upload_host = UploadHost, access = Access} = State)
@@ -241,27 +237,27 @@ process_iq(#jid{luser = LUser, lserver = LServer} = From,
                 {ok, File, Size, ContentType} ->
                     case create_slot(State, User, File, Size, ContentType, Lang) of
                         {ok, Slot} ->
-                            {ok, Timer} = timer:send_after(?SLOT_TIMEOUT,
-                                                           {slot_timed_out, Slot}),
+                            {ok, Timer} =
+                                timer:send_after(?SLOT_TIMEOUT, {slot_timed_out, Slot}),
                             NewState = add_slot(Slot, Size, Timer, State),
                             SlotEl = slot_el(Slot, State, XMLNS),
                             {IQ#iq{type = result, sub_el = [SlotEl]}, NewState};
                         {ok, PutURL, GetURL} ->
                             SlotEl = slot_el(PutURL, GetURL, XMLNS),
-                            IQ#iq{type = result, sub_el = [SlotEl]};
+                            {IQ#iq{type = result, sub_el = [SlotEl]}, State};
                         {error, Error} ->
-                            IQ#iq{type = error, sub_el = [SubEl, Error]}
+                            {IQ#iq{type = error, sub_el = [SubEl, Error]}, State}
                     end;
                 {error, Error} ->
-                    ?DEBUG("Cannot parse request from ~s", [User]),
-                    IQ#iq{type = error, sub_el = [SubEl, Error]}
+                    ?INFO_MSG("Cannot parse request from ~s", [User]),
+                    {IQ#iq{type = error, sub_el = [SubEl, Error]}, State}
             end;
         deny ->
-            ?DEBUG("Denying HTTP upload slot request from ~s", [User]),
-            IQ#iq{type = error, sub_el = [SubEl, ?ERR_FORBIDDEN]}
+            ?INFO_MSG("Denying HTTP upload slot request from ~s", [User]),
+            {IQ#iq{type = error, sub_el = [SubEl, ?ERR_FORBIDDEN]}, State}
     end;
-process_iq(_From, #iq{sub_el = SubEl} = IQ, _State) ->
-    IQ#iq{type = error, sub_el = [SubEl, ?ERR_NOT_ALLOWED]};
+process_iq(_From, #iq{sub_el = SubEl} = IQ, State) ->
+    {IQ#iq{type = error, sub_el = [SubEl, ?ERR_NOT_ALLOWED]}, State};
 process_iq(_From, reply, _State) ->
     not_request;
 process_iq(_From, invalid, _State) ->
